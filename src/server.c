@@ -197,7 +197,7 @@ void handle_req(int *client_fd) {
   *client_fd = -1;
 }
 
-int main() {
+int main(int argc, char **argv) {
   // setting up socket
   int server_fd = socket(AF_INET, SOCK_STREAM, 0);
   if (server_fd == -1) {
@@ -205,9 +205,15 @@ int main() {
     return 1;
   }
 
+  config_t *config;
+  // handling config
+  config = read_args(argc, argv);
+  config = config == NULL ? read_file() : config;
+  config = config == NULL ? default_config() : config;
+
   // setting up address
   struct in_addr in_addr;
-  inet_pton(AF_INET, "192.168.1.107", &in_addr);
+  inet_pton(AF_INET, config->ip_addr, &in_addr);
 
   set_socket_opts(server_fd);
 
@@ -215,7 +221,7 @@ int main() {
   memset(sockaddr, 0, sizeof(struct sockaddr_in));
   sockaddr->sin_family = AF_INET;
   sockaddr->sin_addr = in_addr;
-  sockaddr->sin_port = htons(6969);
+  sockaddr->sin_port = htons(config->port);
 
   // binding socket with address
   if (bind(server_fd, (struct sockaddr *)sockaddr, sizeof(*sockaddr)) == -1) {
@@ -234,7 +240,7 @@ int main() {
     return 1;
   }
 
-  printf("Server is listening on http://192.168.1.107:6969\n");
+  printf("Server is listening on %s:%d\n", config->ip_addr, config->port);
   struct pollfd fds[MAX_CLIENTS + 1];
   fds[0].fd = server_fd;
   fds[0].events = POLLIN;
@@ -260,7 +266,7 @@ int main() {
         perror("error with client fd");
         return 1;
       } else {
-        char *client_ip = inet_ntoa(sockaddr->sin_addr);
+        char *client_ip = inet_ntoa(sockaddr_client.sin_addr);
         printf("Connection established with client IP: %s\n", client_ip);
       }
       int full = 1;
