@@ -207,7 +207,7 @@ int main() {
 
   // setting up address
   struct in_addr in_addr;
-  inet_pton(AF_INET, "127.0.0.1", &in_addr);
+  inet_pton(AF_INET, "192.168.1.107", &in_addr);
 
   set_socket_opts(server_fd);
 
@@ -234,7 +234,7 @@ int main() {
     return 1;
   }
 
-  printf("Server is listening on http://127.0.0.1:6969\n");
+  printf("Server is listening on http://192.168.1.107:6969\n");
   struct pollfd fds[MAX_CLIENTS + 1];
   fds[0].fd = server_fd;
   fds[0].events = POLLIN;
@@ -252,12 +252,16 @@ int main() {
       perror("poll error");
 
     if (fds[0].revents & POLLIN) {
-      int client_fd = accept(fds[0].fd, NULL, NULL);
+      struct sockaddr_in sockaddr_client;
+      int addrlen = sizeof(sockaddr_client);
+      int client_fd = accept(fds[0].fd, (struct sockaddr *)&sockaddr_client,
+                             (socklen_t *)&addrlen);
       if (client_fd == -1) {
         perror("error with client fd");
         return 1;
       } else {
-        printf("Server: got a connection\n");
+        char *client_ip = inet_ntoa(sockaddr->sin_addr);
+        printf("Connection established with client IP: %s\n", client_ip);
       }
       int full = 1;
       for (int i = 1; i < MAX_CLIENTS + 1; i++) {
