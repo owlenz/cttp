@@ -1,4 +1,4 @@
-#include "../include/balls.h"
+#include "cttp.h"
 #include <ini.h>
 #include <stdio.h>
 #include <stdlib.h>

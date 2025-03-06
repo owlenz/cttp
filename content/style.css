@@ -1,0 +1,49 @@
+body {
+	background: #111114;
+	color: #E7E7EB; /* purple water */ 
+	height: 100vh;
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+}
+
+.header_container {
+	display: flex;
+	justify-content: space-between;
+	justify-items: center;
+	margin-left: 20px;
+	margin-right: 20px;
+	width: 100%;
+	max-width: 900px;
+}
+
+header {
+	display: flex;
+	justify-content: center;
+}
+
+.tabs {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	text-decoration: underline;
+}
+
+main {
+	flex: 1;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	margin: auto;
+}
+
+.container {
+	max-width: 1200px;
+	padding-left:  24px;
+	padding-right: 24px;
+}
+
+
+.philosophy {
+	font-size: 20pt;
+}

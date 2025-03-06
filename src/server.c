@@ -1,4 +1,4 @@
-#include "../include/balls.h"
+#include "cttp.h"
 #include <aio.h>
 #include <arpa/inet.h>
 #include <asm-generic/socket.h>
@@ -27,38 +27,6 @@ int set_nonblocking(int fd) {
   return fcntl(fd, F_SETFL, erm | O_NONBLOCK);
 }
 
-// formant response
-void response(char *response_buf, int code, const char *content_type) {
-  ssize_t content_length = strlen(response_buf);
-  char response_body[BUF_SIZE];
-  strcpy(response_body, response_buf);
-  snprintf(response_buf, BUF_SIZE,
-           "HTTP/1.1 200 OK\r\n"
-           "Content-Length: %zu\r\n"
-           "Content-Type: %s\r\n"
-           "Server: CTTP\r\n"
-           "\r\n"
-           "%s",
-           content_length, content_type, response_body);
-}
-
-char *parse_file_type(const char *file) {
-  char *dot = strrchr(file, '.');
-  if (dot == NULL) {
-    return "text/plain";
-  }
-  char file_type[dot - file];
-  strncpy(file_type, dot + 1, dot - file);
-  file_type[dot - file] = '\0';
-  printf("file_type: %s\n", file_type);
-  if (strcmp(file_type, "html") == 0) {
-    return "text/html";
-  } else if (strcmp(file_type, "txt") == 0) {
-    return "text/plain";
-  }
-  return "text/bozo";
-};
-
 int set_socket_opts(int fd) {
   // For Handling address in use even after killing server
   // (SO_REUSEADDR)
@@ -80,48 +48,97 @@ int set_socket_opts(int fd) {
   return 0;
 }
 
+// format response
+void response(response_t *response_object) {
+  unsigned char response_body[BUF_SIZE];
+  memcpy(response_body, response_object->buffer, BUF_SIZE);
+  printf("xdd %s \n", response_body);
+  int header_length = snprintf(response_object->buffer, BUF_SIZE,
+                               "HTTP/1.1 %d OK\r\n"
+                               "Content-Length: %d\r\n"
+                               "Content-Type: %s\r\n"
+                               "Server: cttp\r\n"
+                               "\r\n",
+                               response_object->code, response_object->buffer_len, response_object->content_type);
+  response_object->buffer_len += header_length;
+
+  for (int i = header_length; i < response_object->buffer_len; i++) {
+    response_object->buffer[i] = response_body[i - header_length];
+  }
+	DEBUG_PRINT("%s", response_object->buffer);
+}
+
+char *parse_file_type(const char *file) {
+  char *dot = strrchr(file, '.');
+  if (dot == NULL) {
+    return "text/plain";
+  }
+  char file_type[dot - file];
+  strncpy(file_type, dot + 1, dot - file);
+  file_type[dot - file] = '\0';
+  printf("file_type: %s\n", file_type);
+
+  if (strcmp(file_type, "html") == 0) {
+    return "text/html";
+  } else if (strcmp(file_type, "txt") == 0) {
+    return "text/plain";
+  } else if (strcmp(file_type, "webp") == 0) {
+    return "image/webp";
+  } else if (strcmp(file_type, "css") == 0) {
+    return "text/css";
+  } else if (strcmp(file_type, "js") == 0) {
+    return "text/javascript";
+  }
+  return "text/bozo";
+};
+
+int read_file_res(response_t *response_object, char *file_name) {
+	FILE *fptr = fopen(file_name, "rb");
+	if (fptr == NULL) {
+		perror("SERVER: error opening index.html");
+		return 404;
+	}
+	// get file size
+	fseek(fptr, 0, SEEK_END);
+	long file_size = ftell(fptr);
+	response_object->buffer_len = file_size;
+	fseek(fptr, 0, SEEK_SET);
+
+	size_t bytesRead =
+			fread(response_object->buffer, sizeof(unsigned char), file_size, fptr);
+	if (bytesRead != file_size) {
+		perror("SERVER: error reading file");
+		return 500;
+	}
+	response_object->content_type = parse_file_type(file_name);
+	return 200;
+}
+
+
 // Handling GET requests
 void handle_get(int client_fd, const char *path) {
-  char response_buf[BUF_SIZE] = "Hello, GET!\0";
-  char *content_type = "text/plain\0";
-  int code = 200;
+	response_t *response_object = malloc(sizeof(response_t));
+  strcpy(response_object->buffer, "Hello, GET!");
+	response_object->buffer_len = 11;
+  response_object->content_type = "text/plain\0";
+  response_object->code = 200;
 
   // if path specified
   if (strcmp(path, "/") != 0) {
     char path_good[strlen(path)];
     strncpy(path_good, path + 1, strlen(path) - 1);
     path_good[strlen(path) - 1] = '\0';
-    int fd = open(path_good, O_RDONLY, S_IRWXU);
-    if (fd == -1) {
-      perror("SERVER: error opening file");
-      printf("file name: %s\n", path_good);
-      code = 404;
-    }
-    int err = read(fd, response_buf, BUF_SIZE);
-    if (err == -1) {
-      perror("SERVER: error reading file");
-      code = 500;
-    }
-    content_type = parse_file_type(path_good);
 
+		response_object->code = read_file_res(response_object, path_good);
   } else {
     // serve index.html
-    int fd = open("index.html", O_RDONLY, S_IRWXU);
-    if (fd == -1) {
-      perror("SERVER: error opening index.html");
-      code = 404;
-    }
-    int err = read(fd, response_buf, BUF_SIZE);
-    if (err == -1) {
-      perror("SERVER: error reading file");
-      code = 500;
-    }
-    content_type = parse_file_type("index.html");
+		response_object->code = read_file_res(response_object, "index.html");
   }
 
-  response(response_buf, code, content_type);
+  response(response_object);
 
-  send(client_fd, response_buf, strlen(response_buf), 0);
+	DEBUG_PRINT("%s", response_object->buffer);
+  send(client_fd, response_object->buffer, response_object->buffer_len, 0);
 };
 
 // Handling POST requests
@@ -184,6 +201,7 @@ void handle_req(int *client_fd) {
 
   // Handle The Request
   if (strncmp(buf, "GET", 3) == 0) {
+    // get path (second word)
     char *path = strtok(buf, " ");
     path = strtok(NULL, " ");
     handle_get(*client_fd, path);
@@ -220,7 +238,9 @@ int main(int argc, char **argv) {
   struct sockaddr_in *sockaddr = malloc(sizeof(struct sockaddr_in));
   memset(sockaddr, 0, sizeof(struct sockaddr_in));
   sockaddr->sin_family = AF_INET;
-  sockaddr->sin_addr = in_addr;
+  // now it listens on any address
+  /*sockaddr->sin_addr = in_addr;*/
+  sockaddr->sin_addr.s_addr = INADDR_ANY;
   sockaddr->sin_port = htons(config->port);
 
   // binding socket with address
@@ -230,7 +250,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if (listen(server_fd, 10) == -1) {
+  if (listen(server_fd, MAX_CLIENTS) == -1) {
     perror("listen failed");
     return 1;
   }
@@ -240,7 +260,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  printf("Server is listening on %s:%d\n", config->ip_addr, config->port);
+  printf("Server is listening on port %d\n", config->port);
   struct pollfd fds[MAX_CLIENTS + 1];
   fds[0].fd = server_fd;
   fds[0].events = POLLIN;
@@ -249,6 +269,7 @@ int main(int argc, char **argv) {
     fds[i].fd = -1;
     fds[i].events = POLLIN;
   }
+
   while (1) {
 
     // Polling
