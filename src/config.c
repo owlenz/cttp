@@ -19,7 +19,6 @@ config_t *default_config() {
   return config;
 }
 
-// returns 1 on failure and 0 on success
 int parse_ip(const char *ip_addr) {
   if (strlen(ip_addr) >= IP_ADDR_LEN) {
     /*fprintf(stderr, "ip address too long :%s\n", ip_addr);*/

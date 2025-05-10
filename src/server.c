@@ -1,5 +1,6 @@
 #include "cttp.h"
 #include <aio.h>
+#include <pthread.h>
 #include <arpa/inet.h>
 #include <asm-generic/socket.h>
 #include <bits/types/struct_timeval.h>
@@ -7,7 +8,6 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,7 +16,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#define MAX_CLIENTS 10
+#define MAX_CLIENTS 500
 
 // my dumb ass didnt know that setting this as non-blocking
 // will affect recv, makeing it non-blocking too xddMORS
@@ -52,8 +52,7 @@ int set_socket_opts(int fd) {
 void response(response_t *response_object) {
   unsigned char response_body[BUF_SIZE];
   memcpy(response_body, response_object->buffer, BUF_SIZE);
-  printf("xdd %s \n", response_body);
-  int header_length = snprintf(response_object->buffer, BUF_SIZE,
+  int header_length = snprintf((char *)response_object->buffer, BUF_SIZE,
                                "HTTP/1.1 %d OK\r\n"
                                "Content-Length: %d\r\n"
                                "Content-Type: %s\r\n"
@@ -62,10 +61,10 @@ void response(response_t *response_object) {
                                response_object->code, response_object->buffer_len, response_object->content_type);
   response_object->buffer_len += header_length;
 
-  for (int i = header_length; i < response_object->buffer_len; i++) {
-    response_object->buffer[i] = response_body[i - header_length];
-  }
-	DEBUG_PRINT("%s", response_object->buffer);
+  memcpy(response_object->buffer + header_length, response_body,
+         response_object->buffer_len);
+  response_object->buffer_len += header_length;
+  DEBUG_PRINT("%s", response_object->buffer);
 }
 
 char *parse_file_type(const char *file) {
@@ -93,34 +92,35 @@ char *parse_file_type(const char *file) {
 };
 
 int read_file_res(response_t *response_object, char *file_name) {
-	FILE *fptr = fopen(file_name, "rb");
-	if (fptr == NULL) {
-		perror("SERVER: error opening index.html");
-		return 404;
-	}
-	// get file size
-	fseek(fptr, 0, SEEK_END);
-	long file_size = ftell(fptr);
-	response_object->buffer_len = file_size;
-	fseek(fptr, 0, SEEK_SET);
+  FILE *fptr = fopen(file_name, "rb");
+  if (fptr == NULL) {
+    perror("SERVER: error opening index.html");
+    return 404;
+  }
+  // get file size
+  fseek(fptr, 0, SEEK_END);
+  long file_size = ftell(fptr);
+  response_object->buffer_len = file_size;
+  fseek(fptr, 0, SEEK_SET);
 
-	size_t bytesRead =
-			fread(response_object->buffer, sizeof(unsigned char), file_size, fptr);
-	if (bytesRead != file_size) {
-		perror("SERVER: error reading file");
-		return 500;
-	}
-	response_object->content_type = parse_file_type(file_name);
-	return 200;
+  size_t bytesRead =
+    fread(response_object->buffer, sizeof(unsigned char), file_size, fptr);
+  if (bytesRead != file_size) {
+    perror("SERVER: error reading file");
+    return 500;
+  }
+  response_object->content_type = parse_file_type(file_name);
+  fclose(fptr);
+  return 200;
 }
 
 
 // Handling GET requests
 void handle_get(int client_fd, const char *path) {
-	response_t *response_object = malloc(sizeof(response_t));
-  strcpy(response_object->buffer, "Hello, GET!");
-	response_object->buffer_len = 11;
-  response_object->content_type = "text/plain\0";
+  response_t *response_object = malloc(sizeof(response_t));
+  strcpy((char *)response_object->buffer, "Hello, GET!");
+  response_object->buffer_len = 11;
+  response_object->content_type = "text/plain";
   response_object->code = 200;
 
   // if path specified
@@ -129,16 +129,18 @@ void handle_get(int client_fd, const char *path) {
     strncpy(path_good, path + 1, strlen(path) - 1);
     path_good[strlen(path) - 1] = '\0';
 
-		response_object->code = read_file_res(response_object, path_good);
+    response_object->code = read_file_res(response_object, path_good);
   } else {
     // serve index.html
-		response_object->code = read_file_res(response_object, "index.html");
+    response_object->code = read_file_res(response_object, "index.html");
   }
 
   response(response_object);
 
-	DEBUG_PRINT("%s", response_object->buffer);
+  DEBUG_PRINT("%s", response_object->buffer);
   send(client_fd, response_object->buffer, response_object->buffer_len, 0);
+
+  free(response_object);
 };
 
 // Handling POST requests
@@ -183,36 +185,39 @@ void handle_wrong(int client_fd) {
   send(client_fd, response, strlen(response), 0);
 }
 
-void handle_req(int *client_fd) {
+void *handle_req(void* client_fd_void) {
+  int client_fd = *(int *)client_fd_void;
   // Recieve Data
   char buf[BUF_SIZE];
-  int bytes_read = recv(*client_fd, buf, BUF_SIZE - 1, 0);
+  int bytes_read = recv(client_fd, buf, BUF_SIZE - 1, 0);
 
   // error handling
   if (bytes_read == -1) {
     perror("SERVER: error recieving");
   } else if (bytes_read == 0) {
     perror("SERVER: client disconnected");
-    close(*client_fd);
-    *client_fd = -1;
+    close(client_fd);
+    client_fd = -1;
   }
   buf[bytes_read] = '\0';
-  printf("buf: %s\n", buf);
+  DEBUG_PRINT("buf: %s\n", buf);
 
   // Handle The Request
   if (strncmp(buf, "GET", 3) == 0) {
     // get path (second word)
     char *path = strtok(buf, " ");
     path = strtok(NULL, " ");
-    handle_get(*client_fd, path);
+    handle_get(client_fd, path);
   } else if (strncmp(buf, "POST", 4) == 0) {
-    handle_post(*client_fd);
+    handle_post(client_fd);
   } else if (strncmp(buf, "PUT", 3) == 0) {
-    handle_put(*client_fd);
+    handle_put(client_fd);
   } else {
   }
-  close(*client_fd);
-  *client_fd = -1;
+  close(client_fd);
+  pthread_detach(pthread_self());
+
+  return NULL;
 }
 
 int main(int argc, char **argv) {
@@ -238,9 +243,10 @@ int main(int argc, char **argv) {
   struct sockaddr_in *sockaddr = malloc(sizeof(struct sockaddr_in));
   memset(sockaddr, 0, sizeof(struct sockaddr_in));
   sockaddr->sin_family = AF_INET;
+
   // now it listens on any address
-  /*sockaddr->sin_addr = in_addr;*/
-  sockaddr->sin_addr.s_addr = INADDR_ANY;
+  sockaddr->sin_addr = in_addr;
+  /* sockaddr->sin_addr.s_addr = INADDR_ANY; */
   sockaddr->sin_port = htons(config->port);
 
   // binding socket with address
@@ -270,6 +276,8 @@ int main(int argc, char **argv) {
     fds[i].events = POLLIN;
   }
 
+
+  
   while (1) {
 
     // Polling
@@ -290,23 +298,28 @@ int main(int argc, char **argv) {
         char *client_ip = inet_ntoa(sockaddr_client.sin_addr);
         printf("Connection established with client IP: %s\n", client_ip);
       }
-      int full = 1;
+
+      int fds_full = 1;
       for (int i = 1; i < MAX_CLIENTS + 1; i++) {
         if (fds[i].fd == -1) {
           fds[i].fd = client_fd;
           fds[i].events = POLLIN;
-          full = 0;
+          fds_full = 0;
           break;
         }
       }
-      if (full) {
+      if (fds_full) {
         printf("Max client reached");
         close(client_fd);
       }
     }
     for (int i = 1; i < MAX_CLIENTS + 1; i++) {
       if (fds[i].revents & POLLIN && fds[i].fd != -1) {
-        handle_req(&fds[i].fd);
+        pthread_t thread;
+        int fd = fds[i].fd;
+        fds[i].fd = -1;
+        pthread_create(&thread,NULL,handle_req, &fd);
+        /* handle_req(&fds[i].fd); */
       }
     }
   }

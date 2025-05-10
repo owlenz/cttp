@@ -1,4 +1,4 @@
-#include "../include/balls.h"
+#include "balls.h"
 #include <arpa/inet.h>
 #include <bits/types/struct_timeval.h>
 #include <netinet/in.h>
